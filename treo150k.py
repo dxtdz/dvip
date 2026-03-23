@@ -5,14 +5,12 @@ import time
 import os
 import sys
 import hashlib
-import locale
 import random
 import gc
 import psutil
 import signal
 from collections import defaultdict
-from datetime import datetime, timedelta
-import aiofiles
+from datetime import datetime
 import tracemalloc
 
 # Bật theo dõi memory
@@ -54,11 +52,6 @@ token_lock = asyncio.Lock()
 last_cleanup_time = time.time()
 CLEANUP_INTERVAL = 300
 MAX_MEMORY_PERCENT = 80
-connector_pool = []
-
-# QUẢN LÝ KEEP ONLINE
-online_tasks = []
-online_task_lock = asyncio.Lock()
 
 # Request tracker
 request_tracker = {
@@ -67,118 +60,19 @@ request_tracker = {
     "consecutive_failures": 0
 }
 
-# ==================== 35+ USER-AGENT MOBILE ====================
+# ==================== USER-AGENT MOBILE ====================
 MOBILE_USER_AGENTS = [
-    # iPhone - iOS 17
     "Mozilla/5.0 (iPhone; CPU iPhone OS 17_5_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1",
     "Mozilla/5.0 (iPhone; CPU iPhone OS 17_4_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Mobile/15E148 Safari/604.1",
     "Mozilla/5.0 (iPhone; CPU iPhone OS 17_3_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.3 Mobile/15E148 Safari/604.1",
-    "Mozilla/5.0 (iPhone; CPU iPhone OS 17_2_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.2 Mobile/15E148 Safari/604.1",
-    "Mozilla/5.0 (iPhone; CPU iPhone OS 17_1_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.1 Mobile/15E148 Safari/604.1",
-    "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1",
-    
-    # iPhone - iOS 16
-    "Mozilla/5.0 (iPhone; CPU iPhone OS 16_6_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.6 Mobile/15E148 Safari/604.1",
-    "Mozilla/5.0 (iPhone; CPU iPhone OS 16_5_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.5 Mobile/15E148 Safari/604.1",
-    "Mozilla/5.0 (iPhone; CPU iPhone OS 16_4_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.4 Mobile/15E148 Safari/604.1",
-    "Mozilla/5.0 (iPhone; CPU iPhone OS 16_3_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.3 Mobile/15E148 Safari/604.1",
-    
-    # iPad
-    "Mozilla/5.0 (iPad; CPU OS 17_5_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1",
-    "Mozilla/5.0 (iPad; CPU OS 17_4_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Mobile/15E148 Safari/604.1",
-    "Mozilla/5.0 (iPad; CPU OS 17_3_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.3 Mobile/15E148 Safari/604.1",
-    "Mozilla/5.0 (iPad; CPU OS 16_6_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.6 Mobile/15E148 Safari/604.1",
-    
-    # Samsung Galaxy S24 Series
     "Mozilla/5.0 (Linux; Android 14; SM-S928B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.6422.165 Mobile Safari/537.36",
-    "Mozilla/5.0 (Linux; Android 14; SM-S926B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.6422.165 Mobile Safari/537.36",
-    "Mozilla/5.0 (Linux; Android 14; SM-S921B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.6422.165 Mobile Safari/537.36",
-    
-    # Samsung Galaxy S23 Series
     "Mozilla/5.0 (Linux; Android 14; SM-S918B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.6422.165 Mobile Safari/537.36",
-    "Mozilla/5.0 (Linux; Android 14; SM-S916B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.6422.165 Mobile Safari/537.36",
-    "Mozilla/5.0 (Linux; Android 14; SM-S911B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.6422.165 Mobile Safari/537.36",
-    
-    # Samsung Galaxy S22 Series
-    "Mozilla/5.0 (Linux; Android 13; SM-S908B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.6422.165 Mobile Safari/537.36",
-    "Mozilla/5.0 (Linux; Android 13; SM-S906B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.6422.165 Mobile Safari/537.36",
-    "Mozilla/5.0 (Linux; Android 13; SM-S901B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.6422.165 Mobile Safari/537.36",
-    
-    # Samsung Galaxy Z Series
-    "Mozilla/5.0 (Linux; Android 14; SM-F956B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.6422.165 Mobile Safari/537.36",
-    "Mozilla/5.0 (Linux; Android 14; SM-F946B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.6422.165 Mobile Safari/537.36",
-    
-    # Google Pixel 9 Series
-    "Mozilla/5.0 (Linux; Android 15; Pixel 9 Pro) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.6422.165 Mobile Safari/537.36",
-    "Mozilla/5.0 (Linux; Android 15; Pixel 9) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.6422.165 Mobile Safari/537.36",
-    
-    # Google Pixel 8 Series
     "Mozilla/5.0 (Linux; Android 14; Pixel 8 Pro) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.6422.165 Mobile Safari/537.36",
-    "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.6422.165 Mobile Safari/537.36",
-    
-    # Google Pixel 7 Series
-    "Mozilla/5.0 (Linux; Android 14; Pixel 7 Pro) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.6422.165 Mobile Safari/537.36",
-    "Mozilla/5.0 (Linux; Android 14; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.6422.165 Mobile Safari/537.36",
-    
-    # Google Pixel 6 Series
-    "Mozilla/5.0 (Linux; Android 13; Pixel 6 Pro) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.6422.165 Mobile Safari/537.36",
-    "Mozilla/5.0 (Linux; Android 13; Pixel 6) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.6422.165 Mobile Safari/537.36",
-    
-    # Xiaomi 14 Series
-    "Mozilla/5.0 (Linux; Android 14; 24030PN60G) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.6422.165 Mobile Safari/537.36",
-    "Mozilla/5.0 (Linux; Android 14; 23127PN0CC) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.6422.165 Mobile Safari/537.36",
-    
-    # Xiaomi 13 Series
-    "Mozilla/5.0 (Linux; Android 14; 23078PND5G) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.6422.165 Mobile Safari/537.36",
-    "Mozilla/5.0 (Linux; Android 13; 22101316UG) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.6422.165 Mobile Safari/537.36",
-    
-    # Xiaomi Mi Series
-    "Mozilla/5.0 (Linux; Android 13; M2101K6G) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.6422.165 Mobile Safari/537.36",
-    
-    # OnePlus 12/11 Series
-    "Mozilla/5.0 (Linux; Android 14; CPH2581) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.6422.165 Mobile Safari/537.36",
-    "Mozilla/5.0 (Linux; Android 14; CPH2449) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.6422.165 Mobile Safari/537.36",
-    
-    # OnePlus 10/9 Series
-    "Mozilla/5.0 (Linux; Android 13; CPH2415) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.6422.165 Mobile Safari/537.36",
-    "Mozilla/5.0 (Linux; Android 13; LE2123) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.6422.165 Mobile Safari/537.36",
-    
-    # Discord Mobile App
-    "Discord-Android/231.15 - (https://discord.app)",
-    "Discord-iOS/231.15 - (https://discord.app)",
-    "Mozilla/5.0 (Linux; Android 14) Discord-Android/231015",
-    "Mozilla/5.0 (iPhone; CPU iPhone OS 17_5_1) Discord-iOS/231015",
-    
-    # Facebook Mobile App
-    "Mozilla/5.0 (Linux; Android 14) FacebookApp/231.15",
-    "Mozilla/5.0 (iPhone; CPU iPhone OS 17_5_1) FacebookApp/231.15",
-    
-    # Instagram Mobile App
-    "Mozilla/5.0 (Linux; Android 14) Instagram 231.15",
-    "Mozilla/5.0 (iPhone; CPU iPhone OS 17_5_1) Instagram 231.15",
-    
-    # TikTok Mobile App
-    "Mozilla/5.0 (Linux; Android 14) TikTok 231.15",
-    "Mozilla/5.0 (iPhone; CPU iPhone OS 17_5_1) TikTok 231.15",
-    
-    # Chrome Mobile
-    "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.6422.165 Mobile Safari/537.36",
-    "Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.6367.179 Mobile Safari/537.36",
-    
-    # Firefox Mobile
-    "Mozilla/5.0 (Android 14; Mobile; rv:125.0) Gecko/125.0 Firefox/125.0",
-    "Mozilla/5.0 (Android 13; Mobile; rv:124.0) Gecko/124.0 Firefox/124.0",
-    
-    # Samsung Internet
-    "Mozilla/5.0 (Linux; Android 14; SAMSUNG SM-S928B) AppleWebKit/537.36 (KHTML, like Gecko) SamsungBrowser/23.0 Chrome/115.0.5790.166 Mobile Safari/537.36",
-    "Mozilla/5.0 (Linux; Android 14; SAMSUNG SM-S918B) AppleWebKit/537.36 (KHTML, like Gecko) SamsungBrowser/23.0 Chrome/115.0.5790.166 Mobile Safari/537.36"
 ]
 
-# Cache để lưu UA đã chọn cho mỗi token
 token_user_agent = {}
 
 def get_mobile_user_agent(token):
-    """Lấy user-agent mobile cho token, có cache để tránh thay đổi liên tục"""
     if token not in token_user_agent:
         token_user_agent[token] = random.choice(MOBILE_USER_AGENTS)
     return token_user_agent[token]
@@ -189,7 +83,6 @@ def generate_request_fingerprint():
     return hashlib.md5(f"{timestamp}{random_id}".encode()).hexdigest()
 
 def get_smart_headers(token):
-    """Tạo headers với user-agent mobile"""
     return {
         "Authorization": token,
         "Content-Type": "application/json",
@@ -197,18 +90,9 @@ def get_smart_headers(token):
         "Accept": "application/json, text/plain, */*",
         "Accept-Language": "en-US,en;q=0.9",
         "Accept-Encoding": "gzip, deflate, br",
-        "DNT": "1",
         "Connection": "keep-alive",
-        "Sec-Fetch-Dest": "empty",
-        "Sec-Fetch-Mode": "cors",
-        "Sec-Fetch-Site": "same-origin",
-        "X-Requested-With": "XMLHttpRequest",
-        "X-Super-Properties": generate_request_fingerprint(),
-        "X-Client-Version": "231.15",
-        "X-Client-Type": "mobile"
     }
 
-# Hàm tạo màu
 def color_rainbow(text):
     result = ""
     colors = Colors.RAINBOW
@@ -357,7 +241,6 @@ async def cleanup_invalid_tokens():
         
         gc.collect()
         
-        # Không đóng connector ở đây vì các task vẫn đang dùng
         log_memory()
         
         if removed > 0:
@@ -411,52 +294,6 @@ async def send_typing(session, channel_id, headers):
     except:
         return False
 
-async def keep_online_task(token, stop_event):
-    """Giữ token luôn online - TỰ ĐỘNG CHẠY NGẦM"""
-    headers = get_smart_headers(token)
-    fail_count = 0
-    
-    while not stop_event.is_set():
-        try:
-            # Tạo connector mới cho mỗi request để tránh session closed
-            connector = aiohttp.TCPConnector(ssl=False)
-            async with aiohttp.ClientSession(connector=connector) as session:
-                async with session.patch(
-                    "https://discord.com/api/v9/users/@me/settings",
-                    headers=headers,
-                    json={'status': 'online'},
-                    timeout=5
-                ) as response:
-                    if response.status == 200:
-                        print(f"{Colors.GREEN}[ONLINE] Token: {token[:6]}...{token[-6:]} - Đã set online{Colors.RESET}")
-                        fail_count = 0
-                    elif response.status == 429:
-                        # Rate limit - đợi lâu hơn
-                        retry_after = response.headers.get('Retry-After', 60)
-                        wait_time = int(retry_after) + 10
-                        print(f"{Colors.YELLOW}[ONLINE] Token: {token[:6]}...{token[-6:]} - Rate limit, đợi {wait_time}s{Colors.RESET}")
-                        await asyncio.sleep(wait_time)
-                        continue
-                    else:
-                        fail_count += 1
-                        print(f"{Colors.YELLOW}[ONLINE] Token: {token[:6]}...{token[-6:]} - Lỗi {response.status}{Colors.RESET}")
-                        
-                        if fail_count >= 5:
-                            print(f"{Colors.RED}[ONLINE] Token: {token[:6]}...{token[-6:]} - Fail 5 lần, tạm dừng 5 phút{Colors.RESET}")
-                            await asyncio.sleep(300)
-                            fail_count = 0
-        except Exception as e:
-            fail_count += 1
-            print(f"{Colors.RED}[ONLINE] Token: {token[:6]}...{token[-6:]} - Lỗi: {e}{Colors.RESET}")
-        
-        # Đợi 60 giây rồi set lại
-        for _ in range(60):
-            if stop_event.is_set():
-                break
-            await asyncio.sleep(1)
-    
-    # Không cần đóng connector ở đây vì nó đã được đóng trong context manager
-
 async def log_message(channel_id, channel_name, server_name, content, token, status="Success", proxy=None, typing_time=0):
     global sent_messages, failed_messages
     short_token = f"{token[:6]}...{token[-6:]}"
@@ -504,125 +341,125 @@ async def spam_task(semaphore, token, channel_id, channel_info, contents, base_d
                 
                 headers = get_smart_headers(token)
                 
-                # === GỬI TYPING TRƯỚC ===
-                typing_start = time.time()
-                
-                # Tạo connector mới cho mỗi request để tránh session closed
-                connector = aiohttp.TCPConnector(ssl=False, limit=0, ttl_dns_cache=300, force_close=True)
-                
-                try:
-                    async with aiohttp.ClientSession(connector=connector) as session:
-                        # Gửi typing indicator
-                        typing_task = asyncio.create_task(
-                            send_typing(session, channel_id, headers)
-                        )
-                        
-                        # Đợi typing_delay giây (giả lập đang gõ)
-                        await asyncio.sleep(typing_delay)
-                        
-                        # Đợi typing hoàn thành
-                        await typing_task
-                        
-                        # Sau đó mới gửi message
-                        payload = {"content": contents[content_index]}
-                        content_index = (content_index + 1) % len(contents)
-                        
-                        try:
-                            async with session.post(
-                                f"https://discord.com/api/v9/channels/{channel_id}/messages",
-                                headers=headers,
-                                json=payload,
-                                proxy=proxy,
-                                timeout=aiohttp.ClientTimeout(total=3)
-                            ) as response:
+                # Tạo session mới cho mỗi request
+                connector = aiohttp.TCPConnector(ssl=False, force_close=True)
+                async with aiohttp.ClientSession(connector=connector) as session:
+                    # GỬI TYPING TRƯỚC
+                    typing_start = time.time()
+                    
+                    # Gửi typing indicator
+                    try:
+                        async with session.post(
+                            f"https://discord.com/api/v9/channels/{channel_id}/typing",
+                            headers=headers,
+                            timeout=2
+                        ) as typing_response:
+                            pass
+                    except:
+                        pass
+                    
+                    # Đợi typing_delay giây (giả lập đang gõ)
+                    await asyncio.sleep(typing_delay)
+                    
+                    # Sau đó mới gửi message
+                    payload = {"content": contents[content_index]}
+                    content_index = (content_index + 1) % len(contents)
+                    
+                    try:
+                        async with session.post(
+                            f"https://discord.com/api/v9/channels/{channel_id}/messages",
+                            headers=headers,
+                            json=payload,
+                            proxy=proxy,
+                            timeout=aiohttp.ClientTimeout(total=5)
+                        ) as response:
+                            
+                            token_last_used[token] = time.time()
+                            typing_time = time.time() - typing_start
+                            
+                            if response.status == 404:
+                                async with token_lock:
+                                    if token not in invalid_tokens:
+                                        invalid_tokens.add(token)
+                                        log_error(f"TOKEN 404: {token[:6]}...{token[-6:]} - Đã xóa")
+                                        
+                                        if len(invalid_tokens) % 5 == 0:
+                                            asyncio.create_task(cleanup_invalid_tokens())
+                                break
                                 
-                                token_last_used[token] = time.time()
-                                typing_time = time.time() - typing_start
+                            elif response.status == 429:
+                                global rate_limit_hits
+                                rate_limit_hits += 1
+                                consecutive_failures += 1
+                                consecutive_success = 0
+                                token_fail_count[token] = token_fail_count.get(token, 0) + 1
                                 
-                                if response.status == 404:
+                                retry_after = response.headers.get('Retry-After')
+                                wait_time = handle_rate_limit(token, retry_after)
+                                
+                                print(color_gradient(
+                                    f"[RATE LIMIT] Token: {token[:6]}...{token[-6:]} | Channel: {channel_name} | Wait: {wait_time:.2f}s | Proxy: {proxy if proxy else 'None'}",
+                                    Colors.YELLOW, Colors.RED
+                                ))
+                                
+                                update_request_tracker(False)
+                                await asyncio.sleep(0.01)
+                                
+                            elif response.status == 200:
+                                await log_message(channel_id, channel_name, server_name, contents[content_index], token, "Success", proxy, typing_time)
+                                consecutive_success += 1
+                                consecutive_failures = 0
+                                token_success_count[token] = token_success_count.get(token, 0) + 1
+                                token_fail_count[token] = 0
+                                update_request_tracker(True)
+                                
+                                adaptive_delay = calculate_adaptive_delay(token_delay, consecutive_success, consecutive_failures)
+                                await asyncio.sleep(adaptive_delay)
+                            else:
+                                consecutive_failures += 1
+                                consecutive_success = 0
+                                token_fail_count[token] = token_fail_count.get(token, 0) + 1
+                                update_request_tracker(False)
+                                
+                                if token_fail_count.get(token, 0) >= 10:
                                     async with token_lock:
                                         if token not in invalid_tokens:
                                             invalid_tokens.add(token)
-                                            log_error(f"TOKEN 404: {token[:6]}...{token[-6:]} - Đã xóa")
-                                            
-                                            if len(invalid_tokens) % 5 == 0:
-                                                asyncio.create_task(cleanup_invalid_tokens())
+                                            log_warning(f"TOKEN FAIL 10 LẦN: {token[:6]}...{token[-6:]} - Đã xóa")
                                     break
-                                    
-                                elif response.status == 429:
-                                    global rate_limit_hits
-                                    rate_limit_hits += 1
-                                    consecutive_failures += 1
-                                    consecutive_success = 0
-                                    token_fail_count[token] = token_fail_count.get(token, 0) + 1
-                                    
-                                    retry_after = response.headers.get('Retry-After')
-                                    wait_time = handle_rate_limit(token, retry_after)
-                                    
-                                    print(color_gradient(
-                                        f"[RATE LIMIT] Token: {token[:6]}...{token[-6:]} | Channel: {channel_name} | Wait: {wait_time:.2f}s | Proxy: {proxy if proxy else 'None'} | UA: Mobile",
-                                        Colors.YELLOW, Colors.RED
-                                    ))
-                                    
-                                    update_request_tracker(False)
-                                    await asyncio.sleep(0.01)
-                                    
-                                elif response.status == 200:
-                                    await log_message(channel_id, channel_name, server_name, contents[content_index], token, "Success", proxy, typing_time)
-                                    consecutive_success += 1
-                                    consecutive_failures = 0
-                                    token_success_count[token] = token_success_count.get(token, 0) + 1
-                                    token_fail_count[token] = 0
-                                    update_request_tracker(True)
-                                    
-                                    adaptive_delay = calculate_adaptive_delay(token_delay, consecutive_success, consecutive_failures)
-                                    await asyncio.sleep(adaptive_delay)
-                                else:
-                                    consecutive_failures += 1
-                                    consecutive_success = 0
-                                    token_fail_count[token] = token_fail_count.get(token, 0) + 1
-                                    update_request_tracker(False)
-                                    
-                                    if token_fail_count.get(token, 0) >= 10:
-                                        async with token_lock:
-                                            if token not in invalid_tokens:
-                                                invalid_tokens.add(token)
-                                                log_warning(f"TOKEN FAIL 10 LẦN: {token[:6]}...{token[-6:]} - Đã xóa")
-                                        break
-                                    
-                                    await asyncio.sleep(0.1)
-                                    
-                        except Exception as e:
-                            consecutive_failures += 1
-                            consecutive_success = 0
-                            token_fail_count[token] = token_fail_count.get(token, 0) + 1
-                            update_request_tracker(False)
-                            
-                            if proxy_list:
-                                proxy_index += 1
-                            
-                            await asyncio.sleep(0.1)
-                except Exception as e:
-                    # Lỗi khi tạo session, tiếp tục vòng lặp
-                    await asyncio.sleep(0.1)
-                finally:
-                    # Đảm bảo connector được đóng
+                                
+                                await asyncio.sleep(0.1)
+                                
+                    except asyncio.TimeoutError:
+                        consecutive_failures += 1
+                        update_request_tracker(False)
+                        await asyncio.sleep(0.2)
+                    except Exception as e:
+                        consecutive_failures += 1
+                        consecutive_success = 0
+                        token_fail_count[token] = token_fail_count.get(token, 0) + 1
+                        update_request_tracker(False)
+                        
+                        if proxy_list:
+                            proxy_index += 1
+                        
+                        await asyncio.sleep(0.1)
+                    
                     await connector.close()
                     
         except asyncio.CancelledError:
             break
-        except Exception as e:
+        except Exception:
             await asyncio.sleep(0.1)
 
 async def main_async():
-    global semaphore, proxies, token_delays, stop_event, active_tokens, online_tasks
+    global semaphore, proxies, token_delays, stop_event, active_tokens
     
     print(color_gradient("\n" + "="*70, Colors.CYAN, Colors.BLUE))
-    log_info("SPAM DISCORD - TYPING + KEEP ONLINE TỰ ĐỘNG")
+    log_info("SPAM DISCORD - MODE TYPING")
     print(color_gradient("="*70, Colors.CYAN, Colors.BLUE))
     
     log_success(f"Đã load {len(MOBILE_USER_AGENTS)} user-agent mobile")
-    log_success("Chế độ keep online: TỰ ĐỘNG BẬT cho tất cả token")
     
     log_info("Chọn chế độ spam:")
     print(color_rainbow("  1. Đơn token\n  2. Đa token"))
@@ -650,12 +487,6 @@ async def main_async():
         log_success(f"Đã đọc {len(tokens)} token")
     
     active_tokens = tokens.copy()
-    
-    # === KHỞI ĐỘNG KEEP ONLINE CHO TẤT CẢ TOKEN ===
-    for token in active_tokens:
-        online_task = asyncio.create_task(keep_online_task(token, stop_event))
-        online_tasks.append(online_task)
-    log_success(f"Đã khởi động {len(online_tasks)} task keep online (chạy ngầm)")
     
     channel_ids = []
     channel_info = {}
@@ -710,7 +541,6 @@ async def main_async():
     except ValueError:
         base_delay = 5
     
-    # === DELAY TYPING ===
     typing_delay_input = log_input("Delay typing (giây) [2]: ").strip() or "2"
     try:
         typing_delay = float(typing_delay_input)
@@ -808,7 +638,6 @@ async def main_async():
     log_success(f"Khởi động {total_tasks} tasks spam...")
     log_success(f"User-Agent: Mobile ({len(MOBILE_USER_AGENTS)} loại)")
     log_success(f"Typing delay: {typing_delay}s - Giúp tránh rate limit")
-    log_success("Keep online: TỰ ĐỘNG chạy ngầm - Set online mỗi 60s")
     log_success("Tool đang chạy... Nhấn Ctrl+C để dừng")
     
     log_memory()
@@ -821,27 +650,15 @@ async def main_async():
         stop_event.set()
         cleanup_task.cancel()
         
-        # Hủy tất cả online tasks
-        for task in online_tasks:
-            task.cancel()
-        
         for task in tasks:
             task.cancel()
         
-        # Đợi tất cả tasks hoàn thành
-        await asyncio.gather(*tasks, *online_tasks, return_exceptions=True)
-        
-        # Dọn dẹp
+        await asyncio.gather(*tasks, return_exceptions=True)
         await cleanup_invalid_tokens()
         log_success("Đã dừng tất cả tasks")
         log_memory()
 
 def main():
-    try:
-        locale.setlocale(locale.LC_ALL, 'vi_VN.UTF-8')
-    except:
-        locale.setlocale(locale.LC_ALL, '')
-    
     def signal_handler(sig, frame):
         print(f"\n{Colors.YELLOW}[WARNING] Đang thoát...{Colors.RESET}")
         sys.exit(0)
